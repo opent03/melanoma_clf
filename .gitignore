@@ -1,0 +1,11 @@
+# Data files
+data/
+
+# Notebook stuff
+.ipynb*
+
+# Saved weights
+weights_saves/
+
+# Other memes
+.idea/
