@@ -9,3 +9,4 @@ weights_saves/
 
 # Other memes
 .idea/
+*pycache*
