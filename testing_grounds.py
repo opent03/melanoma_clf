@@ -8,7 +8,7 @@ from torch.nn import functional as F
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 from torch.autograd import Variable
-
+import time
 from torchvision import transforms, models as torchmodels, datasets
 
 import matplotlib.pyplot as plt
@@ -22,25 +22,9 @@ batch_size = 128
 imgsize = (128, 128)
 root = 'data/'
 train_loader, test_loader = load_split_train_test(root, batch_size=batch_size, size=imgsize)
-print(len(train_loader))
-print(len(test_loader))
-exit()
-dt, lb = None, None
-for data, labels in train_loader:
-    for idx in range(len(labels)):
-        if labels[idx] != 1:
-            labels[idx] = 0
-    dt, lb = data, labels
-    break
-
-net = torchmodels.resnet18(num_classes=2)
-output = net(dt)
-print(lb.data.view_as(output))
-
 
 class Hierarchical:
     'A hierarchical classifier'
-
     def __init__(self, num_classes, epochs, batch_size, learning_rate, loaders):
         self.num_classes = num_classes
         self.epochs = epochs
@@ -49,7 +33,7 @@ class Hierarchical:
         self.resnets = []
         self.train_loader, self.test_loader = loaders
         for i in range(num_classes):
-            self.resnets.append(torchmodels.resnet18(num_classes=2))
+            self.resnets.append(torchmodels.resnet50(num_classes=2))
             self.resnets[i].apply(self.init_weights)
             # if torch.cuda.is_available():
             #    self.resnets[i] = self.resnets[i].cuda()
@@ -63,8 +47,6 @@ class Hierarchical:
         self.criterion = nn.CrossEntropyLoss()
         if torch.cuda.is_available():
             self.criterion = self.criterion.cuda()
-
-        self.schedulers = []
 
     def init_weights(self, m):
         'Kaiming weights'
@@ -86,7 +68,7 @@ class Hierarchical:
         if torch.cuda.is_available():
             self.resnets[idx] = self.resnets[idx].cuda()
         self.resnets[idx].train()
-        self.scheduler[idx].step()
+        self.schedulers[idx].step()
         for batch_idx, (features, labels) in enumerate(train_loader):
             # Change multi-class to binary
             labels = self.change_labels(labels, idx)
@@ -135,6 +117,8 @@ class Hierarchical:
 
     def train(self):
         'Train the entire thingy'
+        mean_accuracy = 0
+        self.best_acc = []
         for epoch in range(self.epochs):
             epoch += 1
             loss, accuracy = [], []
@@ -145,7 +129,53 @@ class Hierarchical:
                 loss.append(ls)
                 accuracy.append(acc)
             # Epoch report
-            print()
-            print('Epoch {} completed!\nAverage validation loss: {:.4f}\tAverage accuracy: {:.2f}'.format(
+            print('\nEpoch {} completed!\nAverage validation loss: {:.4f}\tAverage accuracy: {:.2f}\n'.format(
                 epoch, np.mean(loss), np.mean(accuracy)))
-            print()
+            # Update variables
+            if mean_accuracy < np.mean(accuracy):
+                mean_accuracy = np.mean(accuracy)
+                self.best_acc = accuracy
+
+    def recursive_evaluation(self, indices, data, labels, change, origin):
+        """
+        :param idx: index of the model we are evaluating
+        :param data: features
+        :param labels: labels
+        :param change: numpy array of INDICES that need to be re-evaluated
+        :param origin: recurse on this, basically the old predictions
+        :return: pred, the predictions
+        """
+        # Else, do this stuff and recurse
+        output = self.resnets[indices[0]](data)
+        output = output.data.max(1, keepdim=True)[1].numpy().cpu()
+        new_change = []
+        for i in change:
+            if output[i] == 1:
+                origin[i] = indices[0]
+            else:
+                new_change.append(i)
+        if new_change is not [] and len(indices) > 1:
+            return self.recursive_evaluation(indices[1:], data, labels, new_change, origin)
+        else:
+            return origin
+
+
+    def hierarchical_eval(self, data_loader):
+        # First, we get the ordering of models
+        self.best_acc = np.array(self.best_acc)
+        self.indices = np.argsort(self.best_acc)
+        correct = 0.
+        total = 0.
+        for data, labels in data_loader:
+            dt, lb = Variable(data), Variable(labels)
+            if torch.cuda.is_available():
+                dt, lb = dt.cuda(), lb.cuda()
+            pred = self.recursive_evaluation(self.indices, data, labels,
+                                         np.array(list(range(len(labels)))),
+                                         np.zeros(labels.shape))
+            pred = torch.from_numpy(pred)
+            correct += pred.eq(labels.data.view_as(pred)).cpu().sum()
+            total += len(labels)
+        acc = 100. * correct / total
+        print('Hierarchical accuracy: {:.2f}'.format(acc))
+        return acc
