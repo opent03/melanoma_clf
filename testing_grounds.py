@@ -25,13 +25,14 @@ train_loader, test_loader = load_split_train_test(root, batch_size=batch_size, s
 
 class Hierarchical:
     'A hierarchical classifier'
-    def __init__(self, num_classes, epochs, batch_size, learning_rate, loaders):
+    def __init__(self, num_classes, epochs, batch_size, learning_rate, loaders, saves_dir='weights/'):
         self.num_classes = num_classes
         self.epochs = epochs
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.resnets = []
         self.train_loader, self.test_loader = loaders
+        self.saves = saves_dir
         for i in range(num_classes):
             self.resnets.append(torchmodels.resnet50(num_classes=2))
             self.resnets[i].apply(self.init_weights)
